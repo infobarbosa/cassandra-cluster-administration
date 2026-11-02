@@ -1,0 +1,9 @@
+# Arquivos temporários e de sistema
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+__pycache__/
+*.py[cod]

@@ -1,0 +1,18 @@
+#
+# Execução local do laboratório (Apêndice D do README): um container com o
+# code-server e um cluster de 3 nós Cassandra 5, com as duas keyspaces do curso
+# carregadas (RF=3) no primeiro boot.
+#
+#   docker compose up -d
+#
+# Depois, abra http://localhost:8080 no navegador.
+#
+name: cassandra-cluster-administration
+services:
+  cassandra-cluster-lab:
+    container_name: cassandra-cluster-lab
+    image: ghcr.io/infobarbosa/cassandra-cluster-lab-docker-image:latest
+    ports:
+      - "8080:8080"
+    # Tempo para o nodetool drain descarregar as memtables dos 3 nós ao parar o container.
+    stop_grace_period: 60s
