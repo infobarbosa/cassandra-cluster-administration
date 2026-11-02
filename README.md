@@ -517,13 +517,13 @@ Force o `flush` nos 6 nós e veja em quais diretórios `/var/lib/cassandra/node{
 for i in 1 2 3 4 5 6; do "nodetool${i}" flush; done
 
 echo "=== Arquivos Data.db de lab_dc1_rf1 (1 nó no DC1) ==="
-ls -1 /var/lib/cassandra/node{1,2,3,4,5,6}/data/lab_dc1_rf1/cliente-*/*-Data.db 2>/dev/null
+ls -1 /var/lib/cassandra/node*/data/lab_dc1_rf1/cliente-*/*-Data.db
 
 echo "=== Arquivos Data.db de lab_multi_rf2 (2 nós no DC1 + 1 nó no DC2) ==="
-ls -1 /var/lib/cassandra/node{1,2,3,4,5,6}/data/lab_multi_rf2/cliente-*/*-Data.db 2>/dev/null
+ls -1 /var/lib/cassandra/node*/data/lab_multi_rf2/cliente-*/*-Data.db
 
 echo "=== Arquivos Data.db de lab_multi_rf3 (todos os 6 nós) ==="
-ls -1 /var/lib/cassandra/node{1,2,3,4,5,6}/data/lab_multi_rf3/cliente-*/*-Data.db 2>/dev/null
+ls -1 /var/lib/cassandra/node*/data/lab_multi_rf3/cliente-*/*-Data.db
 
 ```
 

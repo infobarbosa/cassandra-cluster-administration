@@ -100,8 +100,8 @@ verifica_keyspace() {
     local tabelas repl rf1 rf2
     tabelas=$(valor "SELECT count(*) FROM system_schema.tables WHERE keyspace_name='$keyspace';")
     repl=$(cql "DESCRIBE KEYSPACE $keyspace;" | head -n 5 || true)
-    rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | tr -dc '0-9' || true)
-    rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | tr -dc '0-9' || true)
+    rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | awk -F: '{print $2}' | tr -dc '0-9' || true)
+    rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | awk -F: '{print $2}' | tr -dc '0-9' || true)
     if [ -z "$tabelas" ] || [ "$tabelas" = "0" ]; then
         falha "$keyspace ausente"
         return
