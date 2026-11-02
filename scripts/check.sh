@@ -99,7 +99,7 @@ verifica_keyspace() {
     local keyspace="$1" esperadas="$2"
     local tabelas repl rf1 rf2
     tabelas=$(valor "SELECT count(*) FROM system_schema.tables WHERE keyspace_name='$keyspace';")
-    repl=$(cql "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name='$keyspace';" || true)
+    repl=$(cql "DESCRIBE KEYSPACE $keyspace;" | head -n 5 || true)
     rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | grep -o "[0-9]*$" || true)
     rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | grep -o "[0-9]*$" || true)
     if [ -z "$tabelas" ] || [ "$tabelas" = "0" ]; then
