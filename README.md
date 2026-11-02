@@ -456,21 +456,16 @@ Vamos criar três keyspaces de experimento para comparar o posicionamento das r�
 cqlsh 127.0.0.1 -e "
 CREATE KEYSPACE IF NOT EXISTS lab_dc1_rf1
     WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 1};
-
 CREATE KEYSPACE IF NOT EXISTS lab_multi_rf2
     WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 2, 'datacenter2': 1};
-
 CREATE KEYSPACE IF NOT EXISTS lab_multi_rf3
     WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 3, 'datacenter2': 3};
-
 CREATE TABLE IF NOT EXISTS lab_dc1_rf1.cliente (id_cliente text PRIMARY KEY, nome text);
 CREATE TABLE IF NOT EXISTS lab_multi_rf2.cliente (id_cliente text PRIMARY KEY, nome text);
 CREATE TABLE IF NOT EXISTS lab_multi_rf3.cliente (id_cliente text PRIMARY KEY, nome text);
-
 INSERT INTO lab_dc1_rf1.cliente (id_cliente, nome) VALUES ('2b162060', 'MARIVALDA');
 INSERT INTO lab_multi_rf2.cliente (id_cliente, nome) VALUES ('2b162060', 'MARIVALDA');
-INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('2b162060', 'MARIVALDA');
-"
+INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('2b162060', 'MARIVALDA');"
 
 ```
 
@@ -548,8 +543,7 @@ O que acontece se a aplicação se conectar ao **`node4` (`127.0.0.4`, no `datac
 # 4.a.1
 cqlsh 127.0.0.4 -e "
 TRACING ON;
-SELECT * FROM lab_dc1_rf1.cliente WHERE id_cliente = '2b162060';
-"
+SELECT * FROM lab_dc1_rf1.cliente WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -590,8 +584,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY ALL;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -640,8 +633,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY QUORUM;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -661,11 +653,9 @@ CONSISTENCY LOCAL_QUORUM;
 UPDATE infobarbank.conta_corrente
 SET saldo_disponivel = 5000.00
 WHERE id_cliente = '2b162060';
-
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -700,8 +690,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY LOCAL_QUORUM;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -728,8 +717,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY LOCAL_QUORUM;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -741,8 +729,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY LOCAL_ONE;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -785,8 +772,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY LOCAL_QUORUM;
 UPDATE infobarbank.conta_corrente
 SET saldo_disponivel = 6500.00
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -818,8 +804,7 @@ cqlsh 127.0.0.6 -e "
 CONSISTENCY LOCAL_ONE;
 SELECT id_cliente, apelido_cliente, saldo_disponivel
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -856,8 +841,7 @@ cqlsh 127.0.0.1 -e "
 CONSISTENCY LOCAL_QUORUM;
 UPDATE infobarbank.conta_corrente
 SET saldo_disponivel = 9999.99
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 node-start 3
 for _ in $(seq 1 30); do
@@ -882,8 +866,7 @@ CONSISTENCY ALL;
 TRACING ON;
 SELECT id_cliente, saldo_disponivel, WRITETIME(saldo_disponivel)
 FROM infobarbank.conta_corrente
-WHERE id_cliente = '2b162060';
-"
+WHERE id_cliente = '2b162060';"
 
 ```
 
@@ -929,8 +912,7 @@ Teste o que acontece quando um nó sofre queda de energia (`node-kill 2`) com es
 cqlsh 127.0.0.1 -e "
 INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c1', 'TESTE CRASH 1');
 INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c2', 'TESTE CRASH 2');
-INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c3', 'TESTE CRASH 3');
-"
+INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c3', 'TESTE CRASH 3');"
 
 node-kill 2
 node-start 2
@@ -965,8 +947,7 @@ nodetool1 tablestats infobarbank.conta_corrente
 cqlsh 127.0.0.1 -e "
 DROP KEYSPACE IF EXISTS lab_dc1_rf1;
 DROP KEYSPACE IF EXISTS lab_multi_rf2;
-DROP KEYSPACE IF EXISTS lab_multi_rf3;
-"
+DROP KEYSPACE IF EXISTS lab_multi_rf3;"
 
 ```
 
