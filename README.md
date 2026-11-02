@@ -735,6 +735,9 @@ WHERE id_cliente = '2b162060';"
 
 Antes de ir para a Parte 4, religue os nós `2`, `3`, `4` e `5`, deixando **apenas o `node6` parado (`DN`)** para estudarmos o Hinted Handoff:
 
+> **Atenção — aguarde cerca de 30 a 60 segundos durante a execução abaixo:**
+> O comando `# 5.d.4` dispara a subida de 4 nós (`2`, `3`, `4` e `5`) e aguarda todos voltarem ao estado `UN` antes de exibir o `nodetool1 status` final.
+
 ```sh
 # 5.d.4
 for n in 2 3 4 5; do node-start "$n"; done
@@ -778,24 +781,41 @@ WHERE id_cliente = '2b162060';"
 
 ### 6.a. Inspecionando o hint guardado no Coordinator (`node1`)
 
-Como o `node1` enviou a mutação para todas as réplicas dos dois datacenters e viu que o `node6` estava `DN`, ele gravou um arquivo `.hints` em `/var/lib/cassandra/node1/hints` endereçado ao `Host ID` do `node6`:
+Como o `node1` enviou a mutação para todas as réplicas dos dois datacenters e viu que o `node6` estava `DN`, ele registrou um *hint* endereçado ao `Host ID` do `node6`. Primeiro, consulte o estado do *Hinted Handoff* e os hints pendentes via `nodetool1`:
 
 ```sh
 # 6.a.2
-nodetool1 flushhints
+nodetool1 statushandoff
+nodetool1 listpendinghints
+
+```
+
+> **Atenção — aguarde cerca de 10 segundos antes do próximo comando:**
+> O Cassandra acumula os hints em um buffer em memória e os descarrega em arquivos `.hints` no diretório `/var/lib/cassandra/node1/hints/` a cada **10 segundos** (`hints_flush_period_in_ms: 10000`). **Aguarde 10 segundos** após a escrita do `# 6.a.1` e liste o diretório no disco do `node1`:
+
+```sh
+# 6.a.3
 ls -lh /var/lib/cassandra/node1/hints/
 
 ```
 
 ### 6.b. Religando o `node6` e vendo a entrega automática do hint
 
-Religue o `node6`, aguarde alguns segundos para a entrega do hint e consulte diretamente o `node6` (`127.0.0.6`) com `CONSISTENCY LOCAL_ONE`:
+Religue o `node6`:
 
 ```sh
 # 6.b.1
 node-start 6
+
+```
+
+> **Atenção — aguarde cerca de 20 a 30 segundos para o `node6` subir e receber o hint:**
+> Assim que o `node6` volta ao estado `UN`, o `node1` detecta o retorno via Gossip e entrega automaticamente o arquivo `.hints`. O bloco a seguir aguarda o `node6` ficar `UN`, espera a entrega do hint e consulta diretamente o `node6` (`127.0.0.6`) com `CONSISTENCY LOCAL_ONE`:
+
+```sh
+# 6.b.2
 for _ in $(seq 1 30); do
-    nodetool1 status | grep -qE "^UN[[:space:]]+127\.0\.0\.6" && break
+    nodetool6 status 2>/dev/null | grep -qE "^UN[[:space:]]+127\.0\.0\.6" && break
     sleep 2
 done
 sleep 6
@@ -830,6 +850,9 @@ E se um nó ficar desligado por mais de 3 horas (`max_hint_window`) ou o coordin
 2. Paramos o `node3` (`127.0.0.3`);
 3. Atualizamos o saldo da Marivalda para **`9999.99`** com `LOCAL_QUORUM`;
 4. Religamos o `node3` e reabilitamos o Hinted Handoff.
+
+> **Atenção — aguarde cerca de 20 a 30 segundos durante a execução abaixo:**
+> O comando `# 7.a.1` para o `node3`, faz a escrita no `node1`, religa o `node3` e aguarda ele voltar ao estado `UN` antes de reabilitar o *Hinted Handoff*.
 
 ```sh
 # 7.a.1
@@ -905,7 +928,7 @@ nodetool1 repair -local lab_multi_rf3
 
 ### 9.a. Parada limpa (`node-stop` / `drain`) vs. Queda abrupta (`node-kill` / *Commitlog Replay*)
 
-Teste o que acontece quando um nó sofre queda de energia (`node-kill 2`) com escritas ainda na *memtable* (antes de virarem `SSTable`):
+Teste o que acontece quando um nó sofre queda de energia (`node-kill 2`) com escritas ainda na *memtable* (antes de virarem `SSTable`). Primeiro, insira três novos registros em `lab_multi_rf3.cliente`:
 
 ```sh
 # 9.a.1
@@ -914,11 +937,25 @@ INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c1', 'TESTE CRASH 
 INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c2', 'TESTE CRASH 2');
 INSERT INTO lab_multi_rf3.cliente (id_cliente, nome) VALUES ('c3', 'TESTE CRASH 3');"
 
+```
+
+> **Atenção — aguarde pelo menos 10 segundos antes de derrubar o `node2`:**
+> Por padrão, o Cassandra utiliza `commitlog_sync: periodic`, sincronizando o buffer do *commitlog* em disco a cada **10 segundos** (`commitlog_sync_period: 10s`), enquanto os dados na *memtable* permanecem apenas em RAM. **Aguarde 10 segundos** após o `# 9.a.1` para garantir que o *commitlog* foi sincronizado em disco e, então, simule a queda de energia (`SIGKILL`, sem `drain`) seguida da religação do `node2`:
+
+```sh
+# 9.a.2
 node-kill 2
 node-start 2
 
+```
+
+> **Atenção — aguarde de 20 a 30 segundos para o `node2` reiniciar:**
+> Como o `node-kill 2` encerra o processo abruptamente (`SIGKILL`) sem enviar aviso de desligamento via Gossip, o `node1` ainda enxerga o `node2` como `UN` por alguns segundos. Para verificar que o próprio `node2` terminou de subir e concluiu o *CommitLog Replay*, consultamos o JMX do próprio `node2` (`nodetool2 status`) antes de ler o `system.log`:
+
+```sh
+# 9.a.3
 for _ in $(seq 1 30); do
-    nodetool1 status | grep -qE "^UN[[:space:]]+127\.0\.0\.2" && break
+    nodetool2 status 2>/dev/null | grep -qE "^UN[[:space:]]+127\.0\.0\.2" && break
     sleep 2
 done
 
