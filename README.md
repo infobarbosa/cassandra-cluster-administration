@@ -126,11 +126,11 @@ Se a sessão do AWS Academy expirar, a instância será parada. **Não execute o
 3. Aguarde o status **Running** e copie o novo **Public IPv4 address**.
 4. Acesse `http://<NOVO_IP_PUBLICO>:8080`.
 
-### O que acontece no primeiro boot
+### O que acontece na subida do container
 
-No Cassandra, dois nós não podem fazer *bootstrap* (entrar no anel) simultaneamente. Por isso, o container sobe os 6 nós **em sequência**: inicia o `node1` ao `node3` no `datacenter1`, depois o `node4` ao `node6` no `datacenter2` (aguardando cada um ficar `UN` antes de iniciar o próximo) e, ao final, carrega as keyspaces `infobarbank` e `infobarshop` com **`RF=3` em cada datacenter**.
+O anel de 6 nós (nos 2 datacenters) e os dados das keyspaces `infobarbank` e `infobarshop` (`RF=3` em cada datacenter) já vêm **pré-inicializados e gravados em SSTables dentro da imagem Docker**. Graças a isso, o container não precisa fazer bootstrap sequencial nem recarregar dados no boot: ele dispara **os 6 nós em paralelo** e todo o cluster fica `UN` em cerca de **30 a 45 segundos**.
 
-Todo esse processo roda em segundo plano (a IDE abre antes de terminar). Acompanhe pelo log:
+Acompanhe pelo log de inicialização:
 
 ```sh
 cat /var/log/lab/carga.log
@@ -139,24 +139,20 @@ cat /var/log/lab/carga.log
 
 ```
 [node1] Iniciado em background (IP 127.0.0.1, JMX 7199, log: /var/log/lab/cassandra-node1.log).
-[carga] node1 (127.0.0.1) pronto (UN).
 [node2] Iniciado em background (IP 127.0.0.2, JMX 7200, log: /var/log/lab/cassandra-node2.log).
-[carga] node2 (127.0.0.2) pronto (UN).
 [node3] Iniciado em background (IP 127.0.0.3, JMX 7201, log: /var/log/lab/cassandra-node3.log).
-[carga] node3 (127.0.0.3) pronto (UN).
 [node4] Iniciado em background (IP 127.0.0.4, JMX 7202, log: /var/log/lab/cassandra-node4.log).
-[carga] node4 (127.0.0.4) pronto (UN).
 [node5] Iniciado em background (IP 127.0.0.5, JMX 7203, log: /var/log/lab/cassandra-node5.log).
-[carga] node5 (127.0.0.5) pronto (UN).
 [node6] Iniciado em background (IP 127.0.0.6, JMX 7204, log: /var/log/lab/cassandra-node6.log).
+[carga] node1 (127.0.0.1) pronto (UN).
+[carga] node2 (127.0.0.2) pronto (UN).
+[carga] node3 (127.0.0.3) pronto (UN).
+[carga] node4 (127.0.0.4) pronto (UN).
+[carga] node5 (127.0.0.5) pronto (UN).
 [carga] node6 (127.0.0.6) pronto (UN).
 [carga] Cluster de 6 nos pronto:
 [...]
-Competencia da carga: 2026-11
-Carregando infobarbank com RF=3 por DC (log: /var/log/lab/carga-infobarbank.log)...
-Carregando infobarshop com RF=3 por DC (log: /var/log/lab/carga-infobarshop.log)...
-infobarbank: ok
-infobarshop: ok
+[carga] Keyspaces infobarbank e infobarshop ja pre-carregadas na imagem.
 Keyspaces prontas.
 [carga] Iniciando o app infobarBank (log: /var/log/lab/app.log).
 ```

@@ -48,13 +48,13 @@ if ! command -v cqlsh >/dev/null 2>&1; then
     exit 1
 fi
 
-titulo "Carga inicial do cluster"
-if grep -q 'FALHOU' /var/log/lab/carga.log 2>/dev/null; then
-    falha "a carga das keyspaces falhou (veja /var/log/lab/carga.log)"
-elif [ -f /var/lib/cassandra/.keyspaces-carregadas ] || grep -q '^Keyspaces prontas' /var/log/lab/carga.log 2>/dev/null; then
-    ok "bootstrap dos 6 nós e carga do primeiro boot concluídos"
+titulo "Inicialização do cluster e keyspaces"
+if grep -q 'FALHOU\|ERRO:' /var/log/lab/carga.log 2>/dev/null; then
+    falha "a inicialização do cluster falhou (veja /var/log/lab/carga.log)"
+elif grep -q '^Keyspaces prontas' /var/log/lab/carga.log 2>/dev/null; then
+    ok "6 nós iniciados em paralelo e keyspaces pré-carregadas prontas"
 else
-    aviso "bootstrap/carga em andamento — acompanhe com: cat /var/log/lab/carga.log"
+    aviso "subida dos 6 nós em andamento — acompanhe com: cat /var/log/lab/carga.log"
 fi
 
 titulo "Nós do cluster (datacenter1 e datacenter2)"
@@ -100,8 +100,8 @@ verifica_keyspace() {
     local tabelas repl rf1 rf2
     tabelas=$(valor "SELECT count(*) FROM system_schema.tables WHERE keyspace_name='$keyspace';")
     repl=$(cql "DESCRIBE KEYSPACE $keyspace;" | head -n 5 || true)
-    rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | grep -o "[0-9]*$" || true)
-    rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | grep -o "[0-9]*$" || true)
+    rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | tr -dc '0-9' || true)
+    rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | tr -dc '0-9' || true)
     if [ -z "$tabelas" ] || [ "$tabelas" = "0" ]; then
         falha "$keyspace ausente"
         return
