@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script de Provisionamento Automático - Laboratório Cassandra Cluster Admin
+# Topologia: 6 nós (2 Datacenters x 3 Racks) — Exige instância EC2 com 8 GB RAM
 # Autor: Prof. Barbosa (infobarbosa@gmail.com)
 # Repositório: https://github.com/infobarbosa/cassandra-cluster-administration
 # ==============================================================================
@@ -10,6 +11,12 @@ set -euo pipefail
 # Tag da imagem do laboratório. Para testar uma branch da imagem, troque pelo
 # nome da branch (o CI publica uma tag com esse nome).
 IMAGE_TAG="latest"
+
+# Memória obrigatória para os 6 nós Cassandra + code-server: 8 GiB (8192 MiB)
+REQUIRED_MEMORY_MIB=8192
+
+# Tipos de instância EC2 x86_64 homologados com exatamente 8 GiB de RAM (8192 MiB)
+CANDIDATE_INSTANCE_TYPES=("t3.large" "t3a.large" "t2.large" "m5.large" "m5a.large" "m6i.large")
 
 # Desabilitar o pager padrao da AWS CLI (evita que comandos travem no less/END)
 export AWS_PAGER=""
@@ -25,15 +32,15 @@ NC='\033[0m' # No Color
 
 echo -e "${CYAN}${BOLD}"
 echo "==================================================================="
-echo "   LABORATÓRIO ADMINISTRAÇÃO DE CLUSTER CASSANDRA - AWS EC2        "
-echo "   Provisionamento Automatizado via AWS CloudShell                 "
+echo "   LABORATÓRIO ADMINISTRAÇÃO DE CLUSTER CASSANDRA (6 NÓS / 2 DCs)  "
+echo "   Provisionamento Automatizado via AWS CloudShell (EC2 8 GB RAM)  "
 echo "==================================================================="
 echo -e "${NC}"
 
 # ------------------------------------------------------------------------------
-# 1. Validação de Região e Descoberta de Rede
+# 1. Validação de Região, Rede e Seleção de Instância de 8 GB de RAM
 # ------------------------------------------------------------------------------
-echo -e "${BLUE}[1/5] Identificando região e infraestrutura de rede...${NC}"
+echo -e "${BLUE}[1/5] Identificando região, rede e instância compatível (8 GB RAM obrigatório)...${NC}"
 
 AWS_REGION=$(aws ec2 describe-availability-zones --query 'AvailabilityZones[0].RegionName' --output text 2>/dev/null || echo "${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}")
 echo -e "  -> Região detectada: ${BOLD}${AWS_REGION}${NC}"
@@ -55,43 +62,60 @@ if [ -z "${VPC_ID}" ] || [ "${VPC_ID}" == "None" ]; then
 fi
 echo -e "  -> VPC Padrão: ${BOLD}${VPC_ID}${NC}"
 
-# Tipo de instância do laboratório e alternativa de mesmo porte (geração anterior).
-INSTANCE_TYPE="t3.large"
-FALLBACK_INSTANCE_TYPE="t2.large"
-
+# Zonas de disponibilidade que oferecem um tipo de instância (separadas por vírgula)
 zonas_com_oferta() {
     aws ec2 describe-instance-type-offerings \
         --region "${AWS_REGION}" \
         --location-type availability-zone \
         --filters "Name=instance-type,Values=$1" \
         --query "InstanceTypeOfferings[].Location" \
-        --output text | tr '\t' ','
+        --output text 2>/dev/null | tr '\t' ','
 }
 
-AZS=$(zonas_com_oferta "${INSTANCE_TYPE}")
-if [ -z "${AZS}" ]; then
-    echo -e "${YELLOW}  [AVISO] Nenhuma zona da região oferece ${INSTANCE_TYPE}; usando ${FALLBACK_INSTANCE_TYPE}.${NC}"
-    INSTANCE_TYPE="${FALLBACK_INSTANCE_TYPE}"
-    AZS=$(zonas_com_oferta "${INSTANCE_TYPE}")
-fi
-if [ -z "${AZS}" ]; then
-    echo -e "${RED}[ERRO] Nenhuma zona da região ${AWS_REGION} oferece ${INSTANCE_TYPE}.${NC}"
+# Valida na API da AWS se o tipo possui exatamente 8192 MiB (8 GiB) de RAM e
+# seleciona uma Subnet da VPC padrão numa zona que ofereça esse tipo.
+INSTANCE_TYPE=""
+SUBNET_ID=""
+SUBNET_AZ=""
+
+for candidate in "${CANDIDATE_INSTANCE_TYPES[@]}"; do
+    MEM_MIB=$(aws ec2 describe-instance-types \
+        --region "${AWS_REGION}" \
+        --instance-types "${candidate}" \
+        --query "InstanceTypes[0].MemoryInfo.SizeInMiB" \
+        --output text 2>/dev/null || echo "0")
+
+    if [ "${MEM_MIB}" != "${REQUIRED_MEMORY_MIB}" ]; then
+        continue
+    fi
+
+    AZS=$(zonas_com_oferta "${candidate}")
+    if [ -z "${AZS}" ]; then
+        continue
+    fi
+
+    read -r found_subnet found_az < <(aws ec2 describe-subnets \
+        --region "${AWS_REGION}" \
+        --filters "Name=vpc-id,Values=${VPC_ID}" "Name=availability-zone,Values=${AZS}" \
+        --query "Subnets[0].[SubnetId,AvailabilityZone]" \
+        --output text 2>/dev/null || true)
+
+    if [ -n "${found_subnet:-}" ] && [ "${found_subnet}" != "None" ]; then
+        INSTANCE_TYPE="${candidate}"
+        SUBNET_ID="${found_subnet}"
+        SUBNET_AZ="${found_az}"
+        echo -e "  -> Tipo selecionado: ${BOLD}${INSTANCE_TYPE}${NC} (${BOLD}${MEM_MIB} MiB / 8 GiB RAM${NC} validados via AWS API)"
+        echo -e "  -> Zonas que oferecem ${BOLD}${INSTANCE_TYPE}${NC}: ${AZS}"
+        echo -e "  -> Subnet selecionada: ${BOLD}${SUBNET_ID}${NC} (${SUBNET_AZ})"
+        break
+    fi
+done
+
+if [ -z "${INSTANCE_TYPE}" ] || [ -z "${SUBNET_ID}" ]; then
+    echo -e "${RED}[ERRO] Nenhum tipo de instância com 8 GB de RAM (${CANDIDATE_INSTANCE_TYPES[*]}) disponível nas Subnets da VPC ${VPC_ID}.${NC}"
+    echo -e "${RED}       Este laboratório executa 6 nós Cassandra e exige obrigatoriamente uma instância de 8 GB de memória.${NC}"
     exit 1
 fi
-echo -e "  -> Zonas que oferecem ${BOLD}${INSTANCE_TYPE}${NC}: ${AZS}"
-
-# Localizar uma Subnet Pública da VPC Padrão numa dessas zonas
-read -r SUBNET_ID SUBNET_AZ < <(aws ec2 describe-subnets \
-    --region "${AWS_REGION}" \
-    --filters "Name=vpc-id,Values=${VPC_ID}" "Name=availability-zone,Values=${AZS}" \
-    --query "Subnets[0].[SubnetId,AvailabilityZone]" \
-    --output text)
-
-if [ -z "${SUBNET_ID}" ] || [ "${SUBNET_ID}" == "None" ]; then
-    echo -e "${RED}[ERRO] Nenhuma Subnet da VPC ${VPC_ID} está numa zona que oferece ${INSTANCE_TYPE}.${NC}"
-    exit 1
-fi
-echo -e "  -> Subnet selecionada: ${BOLD}${SUBNET_ID}${NC} (${SUBNET_AZ})"
 
 # ------------------------------------------------------------------------------
 # 2. Configuração do Security Group (lab-cassandra-sg)
@@ -155,7 +179,7 @@ echo -e "  -> AMI Ubuntu 24.04 LTS: ${BOLD}${AMI_ID}${NC}"
 # ------------------------------------------------------------------------------
 # 4. Lançamento da Instância EC2 (sempre uma nova, com data e hora no nome)
 # ------------------------------------------------------------------------------
-echo -e "\n${BLUE}[4/5] Lançando a instância EC2...${NC}"
+echo -e "\n${BLUE}[4/5] Lançando a instância EC2 (8 GB RAM)...${NC}"
 INSTANCE_PREFIX="lab-cassandra-cluster"
 INSTANCE_TAG_NAME="${INSTANCE_PREFIX}-$(TZ=America/Sao_Paulo date +%Y-%m-%d_%H_%M_%S)"
 
@@ -172,7 +196,7 @@ if [ -n "${PREVIOUS_INSTANCES}" ]; then
     echo -e "${YELLOW}  Se não for mais usá-las, encerre-as no Console EC2 (Instance state > Terminate instance).${NC}"
 fi
 
-echo -e "  -> Provisionando nova instância EC2 ${BOLD}${INSTANCE_TAG_NAME}${NC} (${BOLD}${INSTANCE_TYPE}${NC})..."
+echo -e "  -> Provisionando nova instância EC2 ${BOLD}${INSTANCE_TAG_NAME}${NC} (${BOLD}${INSTANCE_TYPE} - 8 GiB RAM${NC})..."
 
 USER_DATA_SCRIPT='#!/bin/bash
 export HOME=/root
@@ -194,8 +218,8 @@ mkdir -p /home/ubuntu/workspace
 chown -R 1000:1000 /home/ubuntu/workspace
 chmod -R 775 /home/ubuntu/workspace
 
-# Execucao do container (code-server em modo passwordless + cluster Cassandra de 3 nos).
-# O --stop-timeout da tempo ao nodetool drain nos 3 nos quando a instancia e parada.
+# Execucao do container (code-server em modo passwordless + cluster Cassandra de 6 nos em 2 DCs).
+# O --stop-timeout da tempo ao nodetool drain nos 6 nos quando a instancia e parada.
 docker run -d \
   --name cassandra-cluster-lab \
   --restart always \
@@ -257,7 +281,7 @@ fi
 echo -e "\n${GREEN}${BOLD}===================================================================${NC}"
 echo -e "${GREEN}${BOLD}            AMBIENTE DE LABORATÓRIO PRONTO PARA USO!              ${NC}"
 echo -e "${GREEN}${BOLD}===================================================================${NC}"
-echo -e " ${BOLD}Instância:${NC}        ${INSTANCE_TAG_NAME}"
+echo -e " ${BOLD}Instância:${NC}        ${INSTANCE_TAG_NAME} (${INSTANCE_TYPE} - 8 GiB RAM)"
 echo -e " ${BOLD}Instância ID:${NC}     ${INSTANCE_ID}"
 echo -e " ${BOLD}IP Público:${NC}       ${PUBLIC_IP}"
 echo -e " ${BOLD}Link de Acesso:${NC}   ${CYAN}${BOLD}http://${PUBLIC_IP}:8080${NC}"
@@ -267,8 +291,8 @@ echo -e " ${BOLD}IMPORTANTE - TEMPO DE INICIALIZAÇÃO:${NC}"
 echo -e " O script User Data está instalando o Docker e baixando a imagem"
 echo -e " com o code-server e o cluster Cassandra em segundo plano."
 echo -e " -> ${BOLD}Tempo estimado de download da imagem: 2 a 4 minutos.${NC}"
-echo -e " No primeiro boot, os 3 nós sobem em sequência (node1 -> node2 -> node3)"
-echo -e " e carregam as keyspaces infobarbank e infobarshop com RF=3 (~3 minutos)."
+echo -e " No primeiro boot, os 6 nós sobem em sequência (node1 -> node6)"
+echo -e " nos 2 datacenters e carregam infobarbank e infobarshop com RF=3 por DC."
 echo -e " Acompanhe no terminal da IDE com:"
 echo -e "   cat /var/log/lab/carga.log"
 echo -e " Se a página web não responder imediatamente, aguarde 2 minutos e"

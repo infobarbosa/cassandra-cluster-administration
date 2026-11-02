@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Verifica se o ambiente do laboratório de administração de cluster está íntegro.
-# Roda no terminal do code-server:
+# Verifica se o ambiente do laboratório de administração de cluster (6 nós,
+# 2 datacenters x 3 racks) está íntegro. Roda no terminal do code-server:
 #
 #   curl -sS https://raw.githubusercontent.com/infobarbosa/cassandra-cluster-administration/main/scripts/check.sh | bash
 #
@@ -17,11 +17,26 @@ falha() { printf '  \033[31m✗\033[0m %s\n' "$1"; FALHAS=$((FALHAS + 1)); }
 aviso() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 titulo(){ printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-cql() { cqlsh 127.0.0.1 -e "$1" 2>/dev/null || cqlsh 127.0.0.2 -e "$1" 2>/dev/null || cqlsh 127.0.0.3 -e "$1" 2>/dev/null; }
+cql() {
+    for n in 1 2 3 4 5 6; do
+        if cqlsh "127.0.0.${n}" -e "$1" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
 valor() { cql "$1" | sed -n '4p' | tr -d ' '; }
 
+titulo "Memória da Máquina"
+MEM_TOTAL_MB=$(awk '/MemTotal/ {printf "%d", $2 / 1024}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "${MEM_TOTAL_MB}" -ge 7000 ]; then
+    ok "Memória RAM detectada: ${MEM_TOTAL_MB} MB (compatível com o requisito de 8 GB)"
+else
+    aviso "Memória RAM detectada: ${MEM_TOTAL_MB} MB (recomendado: 8 GB / 8192 MB para os 6 nós)"
+fi
+
 titulo "Ferramentas"
-for ferramenta in cqlsh nodetool nodetool1 nodetool2 nodetool3 node-start node-stop node-kill sstabledump; do
+for ferramenta in cqlsh nodetool nodetool1 nodetool2 nodetool3 nodetool4 nodetool5 nodetool6 node-start node-stop node-kill sstabledump; do
     if command -v "$ferramenta" >/dev/null 2>&1; then
         ok "$ferramenta"
     else
@@ -37,29 +52,38 @@ titulo "Carga inicial do cluster"
 if grep -q 'FALHOU' /var/log/lab/carga.log 2>/dev/null; then
     falha "a carga das keyspaces falhou (veja /var/log/lab/carga.log)"
 elif [ -f /var/lib/cassandra/.keyspaces-carregadas ] || grep -q '^Keyspaces prontas' /var/log/lab/carga.log 2>/dev/null; then
-    ok "bootstrap dos 3 nós e carga do primeiro boot concluídos"
+    ok "bootstrap dos 6 nós e carga do primeiro boot concluídos"
 else
     aviso "bootstrap/carga em andamento — acompanhe com: cat /var/log/lab/carga.log"
 fi
 
-titulo "Nós do cluster (datacenter1)"
-STATUS_OUT=$(nodetool1 status 2>/dev/null || nodetool2 status 2>/dev/null || nodetool3 status 2>/dev/null || true)
+titulo "Nós do cluster (datacenter1 e datacenter2)"
+STATUS_OUT=""
+for cmd in nodetool1 nodetool2 nodetool3 nodetool4 nodetool5 nodetool6; do
+    STATUS_OUT=$("$cmd" status 2>/dev/null || true)
+    [ -n "$STATUS_OUT" ] && break
+done
+
 if [ -z "$STATUS_OUT" ]; then
-    falha "nenhum dos 3 nós respondeu ao nodetool (aguarde o bootstrap ou inicie um nó com node-start 1)"
+    falha "nenhum dos 6 nós respondeu ao nodetool (aguarde o bootstrap ou inicie um nó com node-start 1)"
     exit 1
 fi
 
-for n in 1 2 3; do
+for n in 1 2 3 4 5 6; do
     ip="127.0.0.${n}"
-    rack="RAC${n}"
+    if [ "${n}" -le 3 ]; then
+        dc="datacenter1"; rack="RAC${n}"
+    else
+        dc="datacenter2"; rack="RAC$((n - 3))"
+    fi
     linha=$(echo "$STATUS_OUT" | grep -E "[[:space:]]${ip}[[:space:]]" || true)
     if echo "$linha" | grep -q "^UN" && echo "$linha" | grep -q "${rack}"; then
-        ok "node${n} (${ip}, ${rack}): UN (Up/Normal)"
+        ok "node${n} (${ip}, ${dc}, ${rack}): UN (Up/Normal)"
     elif [ -n "$linha" ]; then
         estado=$(echo "$linha" | awk '{print $1}')
-        aviso "node${n} (${ip}, ${rack}): estado ${estado} (use 'node-start ${n}' se você o parou num exercício)"
+        aviso "node${n} (${ip}, ${dc}, ${rack}): estado ${estado} (use 'node-start ${n}' se você o parou num exercício)"
     else
-        falha "node${n} (${ip}, ${rack}) não aparece no anel"
+        falha "node${n} (${ip}, ${dc}, ${rack}) não aparece no anel"
     fi
 done
 
@@ -70,20 +94,22 @@ case "${VERSAO:-}" in
     *)   aviso "versão $VERSAO — o laboratório foi escrito para a série 5.0" ;;
 esac
 
-titulo "Keyspaces e Replicação"
+titulo "Keyspaces e Replicação Multi-DC"
 verifica_keyspace() {
     local keyspace="$1" esperadas="$2"
-    local tabelas rf
+    local tabelas repl rf1 rf2
     tabelas=$(valor "SELECT count(*) FROM system_schema.tables WHERE keyspace_name='$keyspace';")
-    rf=$(cql "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name='$keyspace';" | grep -o "'datacenter1': '[0-9]*'" | grep -o "[0-9]*$" || true)
+    repl=$(cql "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name='$keyspace';" || true)
+    rf1=$(echo "$repl" | grep -o "'datacenter1': '[0-9]*'" | grep -o "[0-9]*$" || true)
+    rf2=$(echo "$repl" | grep -o "'datacenter2': '[0-9]*'" | grep -o "[0-9]*$" || true)
     if [ -z "$tabelas" ] || [ "$tabelas" = "0" ]; then
         falha "$keyspace ausente"
         return
     fi
-    if [ "$tabelas" -eq "$esperadas" ] && [ "${rf:-}" = "3" ]; then
-        ok "$keyspace: $tabelas tabelas (NetworkTopologyStrategy, datacenter1 = 3)"
+    if [ "$tabelas" -eq "$esperadas" ] && [ "${rf1:-}" = "3" ] && [ "${rf2:-}" = "3" ]; then
+        ok "$keyspace: $tabelas tabelas (NetworkTopologyStrategy, datacenter1 = 3, datacenter2 = 3)"
     else
-        aviso "$keyspace: $tabelas tabelas (esperadas $esperadas), RF=${rf:-?}"
+        aviso "$keyspace: $tabelas tabelas (esperadas $esperadas), datacenter1=${rf1:-?}, datacenter2=${rf2:-?}"
     fi
 }
 
@@ -99,7 +125,7 @@ PEDIDOS=$(valor "SELECT count(*) FROM infobarshop.pedido_detalhe;")
 
 titulo "Resultado"
 if [ "$FALHAS" -eq 0 ]; then
-    printf '  \033[32mCluster pronto para o laboratório.\033[0m\n\n'
+    printf '  \033[32mCluster de 6 nós pronto para o laboratório.\033[0m\n\n'
     exit 0
 fi
 printf '  \033[31m%d verificação(ões) falharam.\033[0m\n\n' "$FALHAS"
